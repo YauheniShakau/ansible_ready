@@ -1,50 +1,96 @@
+# tasks file for apt
 ---
-# tasks file for update-everything
-# Debian doesn't have sudo out of the box,
-# so install it prior to running sudo commands.
-- include: Debian_sudo.yml
-  when: ansible_distribution == 'Debian' or
-        ansible_user_uid == 1
-
-- name: Update apt cache.
-  become: yes
-  apt:
-    update_cache: yes
-    cache_valid_time: 3600
-
-- name: Install aptitude.
-  become: yes
-  apt:
-    name: aptitude
-    state: present
-    update_cache: yes
-    cache_valid_time: 3600
-  when: ansible_os_family == 'Debian'
-
-- name: Perform aptitude safe-upgrade.
-  become:  yes
-  apt:
-    upgrade: safe
-    update_cache: yes
-    cache_valid_time: 3600
+- name: update configuration file - /etc/apt/sources.list
+  template:
+    src: "etc/apt/sources.list.{{ ansible_distribution }}.j2"
+    dest: /etc/apt/sources.list
+    owner: root
+    group: root
+    mode: 0644
+  register: apt_config_updated
+  when: apt_manage_sources_list
   tags:
+    - configuration
+    - apt
+    - apt-configuration
+
+- name: update
+  apt:
+    update_cache: true
+    cache_valid_time: "{{ 0 if apt_config_updated is defined and apt_config_updated.changed else apt_update_cache_valid_time }}"
+  when: apt_update
+  tags:
+    - configuration
+    - apt
+    - apt-update
+
+- name: dpkg --configure
+  command: dpkg --configure -a
+  changed_when: _dpkg_configure.stdout_lines | length
+  register: _dpkg_configure
+  when: apt_dpkg_configure
+  tags:
+    - configuration
+    - apt
+    - apt-dpkg-configure
+
+- name: install dependencies
+  apt:
+    name: "{{ item }}"
+    state: "{{ apt_install_state }}"
+  with_items: "{{ apt_dependencies }}"
+  tags:
+    - configuration
+    - apt
+    - apt-dependencies
+
+- name: upgrade
+  apt:
+    upgrade: "{{ apt_upgrade_type }}"
+    update_cache: true
+    dpkg_options: "{{ apt_upgrade_dpkg_options | join(',') }}"
+  when: apt_upgrade
+  tags:
+    - configuration
+    - apt
     - apt-upgrade
-    - safe-upgrade
 
-- name: Remove unneeded packages.
-  become:  yes
-  command: apt-get autoremove -y
-  register: autoremove_result
-  changed_when: "'0 upgraded' not in autoremove_result.stdout"
+- name: clean
+  command: apt-get -y clean
+  changed_when: false
+  when: apt_clean
   tags:
+    - configuration
     - apt
-    - autoremove
+    - apt-clean
 
-- name: Clean the apt cache.
-  become: yes
-  command: apt-get autoclean
-  register: autoclean_result
-  changed_when: "'Del' in autoclean_result.stdout"
+- name: autoremove
+  apt:
+    autoremove: true
+    dpkg_options: "{{ apt_upgrade_dpkg_options | join(',') }}"
+  when: apt_autoremove
   tags:
+    - configuration
     - apt
-    - autoclean
+    - apt-autoremove
+
+- name: install
+  apt:
+    name: "{{ item }}"
+    state: "{{ apt_install_state }}"
+  with_items: "{{ apt_install }}"
+  tags:
+    - configuration
+    - apt
+    - apt-install
+
+- name: remove
+  apt:
+    name: "{{ item }}"
+    state: absent
+    purge: "{{ apt_remove_purge }}"
+  with_items: "{{ apt_remove }}"
+  tags:
+    - configuration
+    - apt
+    - apt-remove
